@@ -20,5 +20,4 @@ else ()
     set(ADDITIONAL_LIBRARIES ${ADDITIONAL_LIBRARIES} pthread)
 endif ()
 
-#target_include_directories(${PROJECT_NAME} PRIVATE ../../dxfeed-c-api/include)
 target_link_libraries(${PROJECT_NAME} DXFeed ${ADDITIONAL_LIBRARIES})

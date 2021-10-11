@@ -11,11 +11,11 @@ int main() {
   dxf_load_config_from_string("network.heartbeatTimeout = 16\nnetwork.reestablishConnections = false\n");
 
   auto result = dxf_create_connection(
-    "demo.dxfeed.com:7300", [](dxf_connection_t connection, void* data) {
+    "demo.dxfeed.com:7300", [](dxf_connection_t connection, void *data) {
       std::cerr << "Disconnected\n";
-      *(static_cast<std::atomic<bool>*>(data)) = true;
+      *(static_cast<std::atomic<bool> *>(data)) = true;
     }, nullptr,
-    nullptr, nullptr, static_cast<void*>(&disconnected), &con);
+    nullptr, nullptr, static_cast<void *>(&disconnected), &con);
 
   if (result == DXF_FAILURE) {
     return -1;
@@ -46,7 +46,7 @@ int main() {
 
   using namespace std::chrono_literals;
 
-  while(true) {
+  while (true) {
     if (disconnected) {
       using namespace std::chrono_literals;
       std::cerr << "Sleeping\n";
