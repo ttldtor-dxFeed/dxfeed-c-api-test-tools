@@ -461,8 +461,8 @@ int main(int argc, char *argv[]) {
   SimpleTimeAndSaleDataProvider provider{};
   SimpleTimeAndSaleDataProvider provider2{};
 
-  auto f = provider.run(argv[1], {"/ESZ21:XCME"});
-  auto f2 = provider2.run(argv[2], {"/ESZ21:XCME"});
+  auto f = provider.run(argv[1], {"/ESZ21:XCME", "/FESX211217:XEUR", "AAPL"});
+  auto f2 = provider2.run(argv[2], {"/ESZ21:XCME", "/FESX211217:XEUR", "AAPL"});
 
   for (auto[s, v]: f.get()) {
     std::cout << s << "[" << v.size() << "]\n";
