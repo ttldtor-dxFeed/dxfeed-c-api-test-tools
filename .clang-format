@@ -1,0 +1,12 @@
+﻿---
+BasedOnStyle: Google
+AlignConsecutiveMacros: Consecutive
+AlignOperands: 'false'
+AlignTrailingComments: true
+ColumnLimit: 120
+ContinuationIndentWidth: 2
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+
+...

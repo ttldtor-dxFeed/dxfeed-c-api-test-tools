@@ -16,6 +16,6 @@ set (CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 include_directories(dxfeed-c-api/include)
 
-add_subdirectory(dxfeed-c-api)
+add_subdirectory(c-api-lib)
 add_subdirectory(tools/mt-reader)
 
