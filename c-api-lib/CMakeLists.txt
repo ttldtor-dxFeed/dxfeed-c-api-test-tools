@@ -83,10 +83,6 @@ set(DXFEED_PARSER_SOURCES
         ${DXFEED_SRC_DIR}/SymbolCodec.c
         )
 
-set(DXFEED_PARSER_TESTS
-        ${DXFEED_SRC_DIR}/TestParser.c
-        )
-
 set(DXFEED_SOURCE_FILES
         ${DXFEED_SRC_DIR}/BinaryQTPComposer.cpp
         ${DXFEED_SRC_DIR}/BinaryQTPParser.cpp
@@ -135,17 +131,12 @@ set(DXFEED_ALL_HEADERS
 set(DXFEED_ALL_SOURCES
         ${DXFEED_SOURCE_FILES}
         ${DXFEED_PARSER_SOURCES}
-        ${DXFEED_PARSER_TESTS}
         ${DXFEED_RESOURCE_FILES}
         )
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     set(MACOSX TRUE)
 endif ()
-
-include(CheckCSourceCompiles)
-
-check_c_source_compiles("_Thread_local int g; int main() { g = 1; return g; }" DXFEED_HAVE__THREAD_LOCAL)
 
 set(DXFEED_ADDITIONAL_LIBRARIES "")
 
@@ -177,9 +168,12 @@ if (WIN32)
         set(CMAKE_C_STANDARD_LIBRARIES "" CACHE STRING "" FORCE)
         # End hack
     elseif (("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU") OR ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang"))
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -pedantic")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -pedantic -Wno-unknown-pragmas")
         set(CMAKE_C_FLAGS_DEBUG "-g -O0")
         set(CMAKE_C_FLAGS_RELEASE "-O2")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pedantic -Wno-unknown-pragmas")
+        set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
+        set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
         set(DXFEED_ADDITIONAL_LIBRARIES
                 ${DXFEED_ADDITIONAL_LIBRARIES}
