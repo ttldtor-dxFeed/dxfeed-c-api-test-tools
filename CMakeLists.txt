@@ -14,8 +14,12 @@ endif ()
 set (CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set (CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-include_directories(dxfeed-c-api/include)
+include_directories(dxfeed-c-api/include dxfeed-c-api/wrappers/cpp/thirdparty/fmt-8.0.0/include)
+include_directories(dxfeed-cxx-api)
+
+add_definitions(-DFMT_HEADER_ONLY=1)
 
 add_subdirectory(c-api-lib)
 add_subdirectory(tools/mt-reader)
+add_subdirectory(tools/collision-detector)
 
