@@ -2,7 +2,7 @@
 #include <EventData.h>
 #include <fmt/chrono.h>
 #include <fmt/format.h>
-#include <StringConvertor.hpp>
+#include <StringConverter.hpp>
 
 #include <atomic>
 #include <chrono>
