@@ -8,7 +8,7 @@
 #include "MarketEvent.hpp"
 #include "OrderScope.hpp"
 #include "OrderSide.hpp"
-#include "StringConvertor.hpp"
+#include "StringConverter.hpp"
 #include "TimeSeriesEvent.hpp"
 
 namespace dxf {

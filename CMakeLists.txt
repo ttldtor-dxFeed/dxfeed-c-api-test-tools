@@ -22,4 +22,5 @@ add_definitions(-DFMT_HEADER_ONLY=1)
 add_subdirectory(c-api-lib)
 add_subdirectory(tools/mt-reader)
 add_subdirectory(tools/collision-detector)
+add_subdirectory(tools/plb-tester)
 

@@ -5,7 +5,7 @@
 
 #include <string>
 
-#include "StringConvertor.hpp"
+#include "StringConverter.hpp"
 
 namespace dxf {
 
