@@ -33,7 +33,8 @@ struct PriceLevel {
   std::int64_t time = 0;
 
   friend bool operator<(const PriceLevel& a, const PriceLevel& b) {
-    if (std::isnan(b.price) || std::isnan(a.price)) return true;
+    if (std::isnan(b.price)) return true;
+    if (std::isnan(a.price)) return false;
 
     return a.price < b.price;
   }
@@ -55,22 +56,27 @@ class PriceLevelBook final {
   std::string symbol_;
   std::string source_;
   std::size_t levelsNumber_;
-  std::deque<PriceLevel> asks_;
-  std::deque<PriceLevel> bids_;
+  std::set<PriceLevel> asks_;
+  std::set<PriceLevel> bids_;
   std::unordered_map<dxf_long_t, OrderData> orderDataSnapshot_;
   bool isValid_;
   std::mutex mutex_;
 
-  std::function<void(const PriceLevelChanges&)> onNewSnapshot_;
-  std::function<void(const PriceLevelChangesSet&)> onChange_;
+  std::function<void(const PriceLevelChanges&)> onNewBook_;
+  std::function<void(const PriceLevelChanges&)> onBookUpdate_;
+  std::function<void(const PriceLevelChangesSet&)> onIncrementalChange_;
+
+  static bool isZeroPriceLevel(const PriceLevel& pl) {
+    return std::abs(pl.size) < std::numeric_limits<double>::epsilon();
+  };
 
   PriceLevelBook(std::string symbol, std::string source, std::size_t levelsNumber)
       : snapshot_{nullptr},
         symbol_{std::move(symbol)},
         source_{std::move(source)},
         levelsNumber_{levelsNumber},
-        asks_(levelsNumber),
-        bids_(levelsNumber),
+        asks_{},
+        bids_{},
         orderDataSnapshot_{},
         isValid_{false},
         mutex_{} {}
@@ -87,10 +93,6 @@ class PriceLevelBook final {
 
     auto isOrderRemoval = [](const dxf_order_t& o) {
       return (o.event_flags & dxf_ef_remove_event) != 0 || o.size == 0 || std::isnan(o.size);
-    };
-
-    auto isZeroPriceLevel = [](const PriceLevel& pl) {
-      return std::abs(pl.size) < std::numeric_limits<double>::epsilon();
     };
 
     for (std::size_t i = 0; i < snapshotData->records_count; i++) {
@@ -114,7 +116,7 @@ class PriceLevelBook final {
           updatesSide.erase(foundPriceLevel);
         }
 
-        //INSERT (PL)
+        // INSERT (PL)
         updatesSide.insert(priceLevelChange);
         orderDataSnapshot_[order.index] = OrderData{order.index, order.price, order.size, order.time, order.side};
       } else {
@@ -148,30 +150,71 @@ class PriceLevelBook final {
             updatesSide.erase(foundPriceLevel);
           }
 
-          //INSERT (PL)
+          // INSERT (PL)
           updatesSide.insert(priceLevelChange);
-          orderDataSnapshot_[foundOrder->second.index] = OrderData{order.index, order.price, order.size, order.time, order.side};
+          orderDataSnapshot_[foundOrder->second.index] =
+            OrderData{order.index, order.price, order.size, order.time, order.side};
         }
       }
     }
 
-    return {std::vector<PriceLevel>(askUpdates.begin(), askUpdates.end()), std::vector<PriceLevel>(bidUpdates.begin(), bidUpdates.end())};
+    return {std::vector<PriceLevel>(askUpdates.begin(), askUpdates.end()),
+            std::vector<PriceLevel>(bidUpdates.rbegin(), bidUpdates.rend())};
   }
 
+  //TODO: price levels number
   PriceLevelChangesSet applyUpdates(const PriceLevelChanges& priceLevelUpdates) {
     PriceLevelChanges additions{};
     PriceLevelChanges updates{};
     PriceLevelChanges removals{};
 
     for (auto updateAsk : priceLevelUpdates.asks) {
+      auto found = asks_.find(updateAsk);
 
+      if (found == asks_.end()) {
+        asks_.insert(updateAsk);
+        additions.asks.push_back(updateAsk);
+      } else {
+        auto newPriceLevelChange = *found;
+
+        newPriceLevelChange.size += updateAsk.size;
+        newPriceLevelChange.time = updateAsk.time;
+
+        if (isZeroPriceLevel(newPriceLevelChange)) {
+          removals.asks.push_back(*found);
+          asks_.erase(found);
+        } else {
+          updates.asks.push_back(newPriceLevelChange);
+          asks_.erase(found);
+          asks_.insert(newPriceLevelChange);
+        }
+      }
     }
 
     for (auto updateBid : priceLevelUpdates.bids) {
+      auto found = bids_.find(updateBid);
 
+      if (found == bids_.end()) {
+        bids_.insert(updateBid);
+        additions.bids.push_back(updateBid);
+      } else {
+        auto newPriceLevelChange = *found;
+
+        newPriceLevelChange.size += updateBid.size;
+        newPriceLevelChange.time = updateBid.time;
+
+        if (isZeroPriceLevel(newPriceLevelChange)) {
+          removals.bids.push_back(*found);
+          bids_.erase(found);
+        } else {
+          updates.bids.push_back(newPriceLevelChange);
+          bids_.erase(found);
+          bids_.insert(newPriceLevelChange);
+        }
+      }
     }
 
-    return {};
+    return {additions, updates, removals};
   }
 
  public:
@@ -188,8 +231,8 @@ class PriceLevelBook final {
     }
 
     if (snapshotData->records_count == 0) {
-      if (newSnap && onNewSnapshot_) {
-        onNewSnapshot_({});
+      if (newSnap && onNewBook_) {
+        onNewBook_({});
       }
 
       return;
@@ -199,12 +242,18 @@ class PriceLevelBook final {
     auto resultingChangesSet = applyUpdates(updates);
 
     if (newSnap) {
-      if (onNewSnapshot_) {
-        onNewSnapshot_(resultingChangesSet.additions);
+      if (onNewBook_) {
+        onNewBook_(PriceLevelChanges{std::vector<PriceLevel>{asks_.begin(), asks_.end()},
+                                     std::vector<PriceLevel>{bids_.rbegin(), bids_.rend()}});
       }
     } else {
-      if (onChange_) {
-        onChange_(resultingChangesSet);
+      if (onIncrementalChange_) {
+        onIncrementalChange_(resultingChangesSet);
+      }
+
+      if (onBookUpdate_) {
+        onBookUpdate_(PriceLevelChanges{std::vector<PriceLevel>{asks_.begin(), asks_.end()},
+                                        std::vector<PriceLevel>{bids_.rbegin(), bids_.rend()}});
       }
     }
   }
@@ -233,6 +282,18 @@ class PriceLevelBook final {
 
     return plb;
   }
-};  // namespace dxf
+
+  void setOnNewBook(std::function<void(const PriceLevelChanges&)> onNewBookHandler) {
+    onNewBook_ = std::move(onNewBookHandler);
+  }
+
+  void setOnBookUpdate(std::function<void(const PriceLevelChanges&)> onBookUpdateHandler) {
+    onBookUpdate_ = std::move(onBookUpdateHandler);
+  }
+
+  void setOnIncrementalChange(std::function<void(const PriceLevelChangesSet&)> onIncrementalChangeHandler) {
+    onIncrementalChange_ = std::move(onIncrementalChangeHandler);
+  }
+};
 
 }  // namespace dxf
