@@ -22,6 +22,8 @@ int main(int argc, char *argv[]) {
   dxf_create_connection(endpoint, nullptr, nullptr, nullptr, nullptr, nullptr, &connection);
   auto plb = dxf::PriceLevelBook::create(connection, symbol, source, numberOfLevels);
   plb->setOnNewBook([](const dxf::PriceLevelChanges &priceLevelChanges) {
+    fmt::print("\n{:^77}\n", "The New Book");
+    fmt::print("{:-^77}\n", "-");
     fmt::print("{:<18} {:<18} | {:<18} {:<18}\n", " Ask", " Size", " Bid", " Size");
     fmt::print("{:-^38}|{:-^38}\n", "-", "-");
     for (std::size_t i = 0; i < (std::max)(priceLevelChanges.asks.size(), priceLevelChanges.bids.size()); i++) {
@@ -40,7 +42,7 @@ int main(int argc, char *argv[]) {
   });
 
   plb->setOnBookUpdate([](const dxf::PriceLevelChanges &priceLevelChanges) {
-    fmt::print("\n{:^77}\n", "Book Update");
+    fmt::print("\n{:^77}\n", "The Book Update");
     fmt::print("{:-^77}\n", "-");
     fmt::print("{:<18} {:<18} | {:<18} {:<18}\n", " Ask", " Size", " Bid", " Size");
     fmt::print("{:-^38}|{:-^38}\n", "-", "-");
