@@ -40,14 +40,14 @@ struct PriceLevel {
 };
 
 struct PriceLevelChanges {
-  std::vector<PriceLevel> asks;
-  std::vector<PriceLevel> bids;
+  std::vector<PriceLevel> asks{};
+  std::vector<PriceLevel> bids{};
 };
 
 struct PriceLevelChangesSet {
-  PriceLevelChanges additions;
-  PriceLevelChanges updates;
-  PriceLevelChanges removals;
+  PriceLevelChanges additions{};
+  PriceLevelChanges updates{};
+  PriceLevelChanges removals{};
 };
 
 class PriceLevelBook final {
@@ -75,12 +75,13 @@ class PriceLevelBook final {
         isValid_{false},
         mutex_{} {}
 
+  // Process the tx\snapshot data, converts it to PL changes. Also, changes the orderDataSnapshot_
   PriceLevelChanges convertToUpdates(const dxf_snapshot_data_ptr_t snapshotData) {
     assert(snapshotData->records_count != 0);
     assert(snapshotData->event_type != dx_eid_order);
 
-    std::set<PriceLevel> bidUpdates{};
     std::set<PriceLevel> askUpdates{};
+    std::set<PriceLevel> bidUpdates{};
 
     auto orders = reinterpret_cast<const dxf_order_t*>(snapshotData->records);
 
@@ -88,36 +89,90 @@ class PriceLevelBook final {
       return (o.event_flags & dxf_ef_remove_event) != 0 || o.size == 0 || std::isnan(o.size);
     };
 
+    auto isZeroPriceLevel = [](const PriceLevel& pl) {
+      return std::abs(pl.size) < std::numeric_limits<double>::epsilon();
+    };
+
     for (std::size_t i = 0; i < snapshotData->records_count; i++) {
       auto order = orders[i];
       auto removal = isOrderRemoval(order);
       auto foundOrder = orderDataSnapshot_.find(order.index);
 
-      if (removal && foundOrder == orderDataSnapshot_.end()) {
-        continue;
+      if (foundOrder == orderDataSnapshot_.end()) {
+        if (removal) {
+          continue;
+        }
+
+        // ADD (Order)
+        auto& updatesSide = order.side == dxf_osd_buy ? bidUpdates : askUpdates;
+        auto priceLevelChange = PriceLevel{order.price, order.size, order.time};
+        auto foundPriceLevel = updatesSide.find(priceLevelChange);
+
+        if (foundPriceLevel != updatesSide.end()) {
+          // UPDATE (PL) : remove + insert
+          priceLevelChange.size = foundPriceLevel->size + priceLevelChange.size;
+          updatesSide.erase(foundPriceLevel);
+        }
+
+        //INSERT (PL)
+        updatesSide.insert(priceLevelChange);
+        orderDataSnapshot_[order.index] = OrderData{order.index, order.price, order.size, order.time, order.side};
+      } else {
+        auto& updatesSide = foundOrder->second.side == dxf_osd_buy ? bidUpdates : askUpdates;
+
+        if (removal) {
+          // REMOVE (Order)
+          auto priceLevelChange = PriceLevel{foundOrder->second.price, -foundOrder->second.size, order.time};
+          auto foundPriceLevel = updatesSide.find(priceLevelChange);
+
+          if (foundPriceLevel != updatesSide.end()) {
+            // REMOVE (PL)
+            priceLevelChange.size = foundPriceLevel->size + priceLevelChange.size;
+            updatesSide.erase(foundPriceLevel);
+          }
+
+          if (!isZeroPriceLevel(priceLevelChange)) {
+            // UPDATE (PL)
+            updatesSide.insert(priceLevelChange);
+          }
+
+          orderDataSnapshot_.erase(foundOrder->second.index);
+        } else {
+          // UPDATE (Order)
+          auto priceLevelChange = PriceLevel{order.price, order.size, order.time};
+          auto foundPriceLevel = updatesSide.find(priceLevelChange);
+
+          if (foundPriceLevel != updatesSide.end()) {
+            // UPDATE (PL)
+            priceLevelChange.size = foundPriceLevel->size + priceLevelChange.size;
+            updatesSide.erase(foundPriceLevel);
+          }
+
+          //INSERT (PL)
+          updatesSide.insert(priceLevelChange);
+          orderDataSnapshot_[foundOrder->second.index] = OrderData{order.index, order.price, order.size, order.time, order.side};
+        }
       }
-
-      //TODO: ADD order -> add pl, UPDATE order -> remove + add pl, REMOVE order -> (size > 0) remove + add pl | (size == 0) remove pl
-
-      std::set<PriceLevel>& updatesSide = order.side == dxf_osd_buy ? bidUpdates : askUpdates;
-      auto priceLevel = removal ? PriceLevel{foundOrder->second.price, -foundOrder->second.size, foundOrder->second.time}
-                                : PriceLevel{order.price, order.size, order.time};
-      auto foundLevel = updatesSide.find(priceLevel);
-
-
-
-      if (foundLevel != updatesSide.end()) {
-        priceLevel.size = foundLevel->size + priceLevel.size;
-        updatesSide.erase(foundLevel);
-      }
-
-      updatesSide.insert(priceLevel);
     }
 
-    return {std::vector<PriceLevel>()};
+    return {std::vector<PriceLevel>(askUpdates.begin(), askUpdates.end()), std::vector<PriceLevel>(bidUpdates.begin(), bidUpdates.end())};
   }
 
-  PriceLevelChangesSet applyUpdates(const PriceLevelChanges& updates) { return {}; }
+  PriceLevelChangesSet applyUpdates(const PriceLevelChanges& priceLevelUpdates) {
+    PriceLevelChanges additions{};
+    PriceLevelChanges updates{};
+    PriceLevelChanges removals{};
+
+    for (auto updateAsk : priceLevelUpdates.asks) {
+
+    }
+
+    for (auto updateBid : priceLevelUpdates.bids) {
+
+    }
+
+    return {};
+  }
 
  public:
   // TODO: move to another thread
