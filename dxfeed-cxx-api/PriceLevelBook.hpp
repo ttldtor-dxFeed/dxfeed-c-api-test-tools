@@ -1,8 +1,14 @@
 #pragma once
 
 #include <DXFeed.h>
+#include <fmt/format.h>
 
 #include <algorithm>
+#include <boost/multi_index/identity.hpp>
+#include <boost/multi_index/member.hpp>
+#include <boost/multi_index/ordered_index.hpp>
+#include <boost/multi_index/random_access_index.hpp>
+#include <boost/multi_index_container.hpp>
 #include <cassert>
 #include <cmath>
 #include <deque>
@@ -51,13 +57,19 @@ struct PriceLevelChangesSet {
   PriceLevelChanges removals{};
 };
 
+namespace bmi = boost::multi_index;
+
+using PriceLevelContainer = bmi::multi_index_container<
+  PriceLevel,
+  bmi::indexed_by<bmi::random_access<>, bmi::ordered_unique<bmi::member<PriceLevel, double, &PriceLevel::price>>>>;
+
 class PriceLevelBook final {
   dxf_snapshot_t snapshot_;
   std::string symbol_;
   std::string source_;
   std::size_t levelsNumber_;
-  std::set<PriceLevel> asks_;
-  std::set<PriceLevel> bids_;
+  PriceLevelContainer asks_;
+  PriceLevelContainer bids_;
   std::unordered_map<dxf_long_t, OrderData> orderDataSnapshot_;
   bool isValid_;
   std::mutex mutex_;
@@ -70,7 +82,11 @@ class PriceLevelBook final {
     return std::abs(pl.size) < std::numeric_limits<double>::epsilon();
   };
 
-  PriceLevelBook(std::string symbol, std::string source, std::size_t levelsNumber)
+  static bool areEqualPrices(double price1, double price2) {
+    return std::abs(price1 - price2) < std::numeric_limits<double>::epsilon();
+  }
+
+  PriceLevelBook(std::string symbol, std::string source, std::size_t levelsNumber = 0)
       : snapshot_{nullptr},
         symbol_{std::move(symbol)},
         source_{std::move(source)},
@@ -95,84 +111,83 @@ class PriceLevelBook final {
       return (o.event_flags & dxf_ef_remove_event) != 0 || o.size == 0 || std::isnan(o.size);
     };
 
+    auto processOrderAddition = [&bidUpdates, &askUpdates](const dxf_order_t& order) {
+      auto& updatesSide = order.side == dxf_osd_buy ? bidUpdates : askUpdates;
+      auto priceLevelChange = PriceLevel{order.price, order.size, order.time};
+      auto foundPriceLevel = updatesSide.find(priceLevelChange);
+
+      if (foundPriceLevel != updatesSide.end()) {
+        priceLevelChange.size = foundPriceLevel->size + priceLevelChange.size;
+        updatesSide.erase(foundPriceLevel);
+      }
+
+      updatesSide.insert(priceLevelChange);
+    };
+
+    auto processOrderRemoval = [&bidUpdates, &askUpdates](const dxf_order_t& order, const OrderData& foundOrderData) {
+      auto& updatesSide = foundOrderData.side == dxf_osd_buy ? bidUpdates : askUpdates;
+      auto priceLevelChange = PriceLevel{foundOrderData.price, -foundOrderData.size, order.time};
+      auto foundPriceLevel = updatesSide.find(priceLevelChange);
+
+      if (foundPriceLevel != updatesSide.end()) {
+        priceLevelChange.size = foundPriceLevel->size + priceLevelChange.size;
+        updatesSide.erase(foundPriceLevel);
+      }
+
+      if (!isZeroPriceLevel(priceLevelChange)) {
+        updatesSide.insert(priceLevelChange);
+      }
+    };
+
     for (std::size_t i = 0; i < snapshotData->records_count; i++) {
       auto order = orders[i];
-      auto removal = isOrderRemoval(order);
-      auto foundOrder = orderDataSnapshot_.find(order.index);
 
-      if (foundOrder == orderDataSnapshot_.end()) {
+      fmt::print("O:ind={},pr={},sz={},sd={}\n", order.index, order.price, order.size,
+                 order.side == dxf_osd_buy ? "buy" : "sell");
+
+      auto removal = isOrderRemoval(order);
+      auto foundOrderDataIt = orderDataSnapshot_.find(order.index);
+
+      if (foundOrderDataIt == orderDataSnapshot_.end()) {
         if (removal) {
           continue;
         }
 
-        // ADD (Order)
-        auto& updatesSide = order.side == dxf_osd_buy ? bidUpdates : askUpdates;
-        auto priceLevelChange = PriceLevel{order.price, order.size, order.time};
-        auto foundPriceLevel = updatesSide.find(priceLevelChange);
-
-        if (foundPriceLevel != updatesSide.end()) {
-          // UPDATE (PL) : remove + insert
-          priceLevelChange.size = foundPriceLevel->size + priceLevelChange.size;
-          updatesSide.erase(foundPriceLevel);
-        }
-
-        // INSERT (PL)
-        updatesSide.insert(priceLevelChange);
+        processOrderAddition(order);
         orderDataSnapshot_[order.index] = OrderData{order.index, order.price, order.size, order.time, order.side};
       } else {
-        auto& updatesSide = foundOrder->second.side == dxf_osd_buy ? bidUpdates : askUpdates;
+        const auto& foundOrderData = foundOrderDataIt->second;
 
         if (removal) {
-          // REMOVE (Order)
-          auto priceLevelChange = PriceLevel{foundOrder->second.price, -foundOrder->second.size, order.time};
-          auto foundPriceLevel = updatesSide.find(priceLevelChange);
-
-          if (foundPriceLevel != updatesSide.end()) {
-            // REMOVE (PL)
-            priceLevelChange.size = foundPriceLevel->size + priceLevelChange.size;
-            updatesSide.erase(foundPriceLevel);
-          }
-
-          if (!isZeroPriceLevel(priceLevelChange)) {
-            // UPDATE (PL)
-            updatesSide.insert(priceLevelChange);
-          }
-
-          orderDataSnapshot_.erase(foundOrder->second.index);
+          processOrderRemoval(order, foundOrderData);
+          orderDataSnapshot_.erase(foundOrderData.index);
         } else {
-          // UPDATE (Order)
-          auto priceLevelChange = PriceLevel{order.price, order.size, order.time};
-          auto foundPriceLevel = updatesSide.find(priceLevelChange);
-
-          if (foundPriceLevel != updatesSide.end()) {
-            // UPDATE (PL)
-            priceLevelChange.size = foundPriceLevel->size + priceLevelChange.size;
-            updatesSide.erase(foundPriceLevel);
+          if (order.side != foundOrderData.side) {
+            processOrderRemoval(order, foundOrderData);
           }
 
-          // INSERT (PL)
-          updatesSide.insert(priceLevelChange);
-          orderDataSnapshot_[foundOrder->second.index] =
+          processOrderAddition(order);
+          orderDataSnapshot_[foundOrderData.index] =
             OrderData{order.index, order.price, order.size, order.time, order.side};
         }
       }
     }
 
-    return {std::vector<PriceLevel>(askUpdates.begin(), askUpdates.end()),
-            std::vector<PriceLevel>(bidUpdates.rbegin(), bidUpdates.rend())};
+    return {std::vector<PriceLevel>{askUpdates.begin(), askUpdates.end()},
+            std::vector<PriceLevel>{bidUpdates.rbegin(), bidUpdates.rend()}};
   }
 
-  //TODO: price levels number
+  // TODO: price levels number
   PriceLevelChangesSet applyUpdates(const PriceLevelChanges& priceLevelUpdates) {
     PriceLevelChanges additions{};
     PriceLevelChanges updates{};
     PriceLevelChanges removals{};
 
-    for (auto updateAsk : priceLevelUpdates.asks) {
-      auto found = asks_.find(updateAsk);
+    // We generate lists of additions, updates, removals
+    for (const auto& updateAsk : priceLevelUpdates.asks) {
+      auto found = std::lower_bound(asks_.begin(), asks_.end(), updateAsk);
 
-      if (found == asks_.end()) {
-        asks_.insert(updateAsk);
+      if (found == asks_.end() || !areEqualPrices(found->price, updateAsk.price)) {
         additions.asks.push_back(updateAsk);
       } else {
         auto newPriceLevelChange = *found;
@@ -182,20 +197,16 @@ class PriceLevelBook final {
 
         if (isZeroPriceLevel(newPriceLevelChange)) {
           removals.asks.push_back(*found);
-          asks_.erase(found);
         } else {
           updates.asks.push_back(newPriceLevelChange);
-          asks_.erase(found);
-          asks_.insert(newPriceLevelChange);
         }
       }
     }
 
-    for (auto updateBid : priceLevelUpdates.bids) {
-      auto found = bids_.find(updateBid);
+    for (const auto& updateBid : priceLevelUpdates.bids) {
+      auto found = std::lower_bound(bids_.begin(), bids_.end(), updateBid);
 
-      if (found == bids_.end()) {
-        bids_.insert(updateBid);
+      if (found == bids_.end() || !areEqualPrices(found->price, updateBid.price)) {
         additions.bids.push_back(updateBid);
       } else {
         auto newPriceLevelChange = *found;
@@ -205,16 +216,133 @@ class PriceLevelBook final {
 
         if (isZeroPriceLevel(newPriceLevelChange)) {
           removals.bids.push_back(*found);
-          bids_.erase(found);
         } else {
           updates.bids.push_back(newPriceLevelChange);
-          bids_.erase(found);
-          bids_.insert(newPriceLevelChange);
         }
       }
     }
 
-    return {additions, updates, removals};
+    std::set<PriceLevel> askRemovals{};
+    std::set<PriceLevel> bidRemovals{};
+    std::set<PriceLevel> askAdditions{};
+    std::set<PriceLevel> bidAdditions{};
+    std::set<PriceLevel> askUpdates{};
+    std::set<PriceLevel> bidUpdates{};
+
+    for (const auto& askRemoval : removals.asks) {
+      if (asks_.empty()) continue;
+
+      // Determine what will be the removal given the number of price levels.
+      if (levelsNumber_ == 0 || asks_.size() <= levelsNumber_ || askRemoval.price < asks_[levelsNumber_].price) {
+        askRemovals.insert(askRemoval);
+      }
+
+      // Determine what will be the shift in price levels after removal.
+      if (levelsNumber_ != 0 && asks_.size() > levelsNumber_ && askRemoval.price < asks_[levelsNumber_].price) {
+        askAdditions.insert(asks_[levelsNumber_]);
+      }
+
+      // remove price level by price
+      asks_.get<1>().erase(askRemoval.price);
+    }
+
+    for (const auto& askAddition : additions.asks) {
+      // We determine what will be the addition of the price level, taking into account the possible quantity.
+      if (levelsNumber_ == 0 || asks_.size() < levelsNumber_ || askAddition.price < asks_[levelsNumber_ - 1].price) {
+        askAdditions.insert(askAddition);
+      }
+
+      // We determine what will be the shift after adding
+      if (levelsNumber_ != 0 && asks_.size() >= levelsNumber_ && askAddition.price < asks_[levelsNumber_ - 1].price) {
+        const auto& toRemove = asks_[levelsNumber_ - 1];
+
+        // We take into account the possibility that the previously added price level will be deleted.
+        if (askAdditions.contains(toRemove)) {
+          askAdditions.erase(toRemove);
+        } else {
+          askRemovals.insert(toRemove);
+        }
+      }
+
+      asks_.get<1>().insert(askAddition);
+    }
+
+    for (const auto& askUpdate : updates.asks) {
+      if (levelsNumber_ == 0 || asks_.get<1>().count(askUpdate.price) > 0) {
+        askUpdates.insert(askUpdate);
+      }
+
+      asks_.get<1>().erase(askUpdate.price);
+      asks_.get<1>().insert(askUpdate);
+    }
+
+    for (const auto& bidRemoval : removals.bids) {
+      if (bids_.empty()) continue;
+
+      // Determine what will be the removal given the number of price levels.
+      if (levelsNumber_ == 0 || bids_.size() <= levelsNumber_ ||
+          bidRemoval.price > bids_[bids_.size() - 1 - levelsNumber_].price) {
+        bidRemovals.insert(bidRemoval);
+      }
+
+      // Determine what will be the shift in price levels after removal.
+      if (levelsNumber_ != 0 && bids_.size() > levelsNumber_ &&
+          bidRemoval.price > bids_[bids_.size() - 1 - levelsNumber_].price) {
+        bidAdditions.insert(bids_[bids_.size() - 1 - levelsNumber_]);
+      }
+
+      // remove price level by price
+      bids_.get<1>().erase(bidRemoval.price);
+    }
+
+    for (const auto& bidAddition : additions.bids) {
+      // We determine what will be the addition of the price level, taking into account the possible quantity.
+      if (levelsNumber_ == 0 || bids_.size() < levelsNumber_ ||
+          bidAddition.price > bids_[bids_.size() - levelsNumber_].price) {
+        bidAdditions.insert(bidAddition);
+      }
+
+      // We determine what will be the shift after adding
+      if (levelsNumber_ != 0 && bids_.size() >= levelsNumber_ &&
+          bidAddition.price > bids_[bids_.size() - levelsNumber_].price) {
+        const auto& toRemove = bids_[bids_.size() - levelsNumber_];
+
+        // We take into account the possibility that the previously added price level will be deleted.
+        if (bidAdditions.contains(toRemove)) {
+          bidAdditions.erase(toRemove);
+        } else {
+          bidRemovals.insert(toRemove);
+        }
+      }
+
+      bids_.get<1>().insert(bidAddition);
+    }
+
+    for (const auto& bidUpdate : updates.bids) {
+      if (levelsNumber_ == 0 || bids_.get<1>().count(bidUpdate.price) > 0) {
+        bidUpdates.insert(bidUpdate);
+      }
+
+      bids_.get<1>().erase(bidUpdate.price);
+      bids_.get<1>().insert(bidUpdate);
+    }
+
+    return {PriceLevelChanges{std::vector<PriceLevel>{askAdditions.begin(), askAdditions.end()},
+                              std::vector<PriceLevel>{bidAdditions.rbegin(), bidAdditions.rend()}},
+            PriceLevelChanges{std::vector<PriceLevel>{askUpdates.begin(), askUpdates.end()},
+                              std::vector<PriceLevel>{bidUpdates.rbegin(), bidUpdates.rend()}},
+            PriceLevelChanges{std::vector<PriceLevel>{askRemovals.begin(), askRemovals.end()},
+                              std::vector<PriceLevel>{bidRemovals.rbegin(), bidRemovals.rend()}}};
+  }
+
+  [[nodiscard]] std::vector<PriceLevel> getAsks() const {
+    return {asks_.begin(),
+            (levelsNumber_ == 0 || asks_.size() <= levelsNumber_) ? asks_.end() : asks_.begin() + levelsNumber_};
+  }
+
+  [[nodiscard]] std::vector<PriceLevel> getBids() const {
+    return {bids_.rbegin(),
+            (levelsNumber_ == 0 || bids_.size() <= levelsNumber_) ? bids_.rend() : bids_.rbegin() + levelsNumber_};
   }
 
  public:
@@ -243,8 +371,7 @@ class PriceLevelBook final {
 
     if (newSnap) {
       if (onNewBook_) {
-        onNewBook_(PriceLevelChanges{std::vector<PriceLevel>{asks_.begin(), asks_.end()},
-                                     std::vector<PriceLevel>{bids_.rbegin(), bids_.rend()}});
+        onNewBook_(PriceLevelChanges{getAsks(), getBids()});
       }
     } else {
       if (onIncrementalChange_) {
@@ -252,8 +379,7 @@ class PriceLevelBook final {
       }
 
       if (onBookUpdate_) {
-        onBookUpdate_(PriceLevelChanges{std::vector<PriceLevel>{asks_.begin(), asks_.end()},
-                                        std::vector<PriceLevel>{bids_.rbegin(), bids_.rend()}});
+        onBookUpdate_(PriceLevelChanges{getAsks(), getBids()});
       }
     }
   }
