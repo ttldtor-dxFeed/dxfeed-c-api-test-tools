@@ -61,7 +61,7 @@ namespace bmi = boost::multi_index;
 
 using PriceLevelContainer = bmi::multi_index_container<
   PriceLevel,
-  bmi::indexed_by<bmi::random_access<>, bmi::ordered_unique<bmi::member<PriceLevel, double, &PriceLevel::price>>>>;
+  bmi::indexed_by<bmi::ordered_unique<bmi::member<PriceLevel, double, &PriceLevel::price>>, bmi::random_access<>>>;
 
 class PriceLevelBook final {
   dxf_snapshot_t snapshot_;
@@ -185,7 +185,7 @@ class PriceLevelBook final {
 
     // We generate lists of additions, updates, removals
     for (const auto& updateAsk : priceLevelUpdates.asks) {
-      auto found = std::lower_bound(asks_.begin(), asks_.end(), updateAsk);
+      auto found = asks_.lower_bound(updateAsk.price);
 
       if (found == asks_.end() || !areEqualPrices(found->price, updateAsk.price)) {
         additions.asks.push_back(updateAsk);
@@ -204,7 +204,7 @@ class PriceLevelBook final {
     }
 
     for (const auto& updateBid : priceLevelUpdates.bids) {
-      auto found = std::lower_bound(bids_.begin(), bids_.end(), updateBid);
+      auto found = bids_.lower_bound(updateBid.price);
 
       if (found == bids_.end() || !areEqualPrices(found->price, updateBid.price)) {
         additions.bids.push_back(updateBid);
@@ -233,28 +233,28 @@ class PriceLevelBook final {
       if (asks_.empty()) continue;
 
       // Determine what will be the removal given the number of price levels.
-      if (levelsNumber_ == 0 || asks_.size() <= levelsNumber_ || askRemoval.price < asks_[levelsNumber_].price) {
+      if (levelsNumber_ == 0 || asks_.size() <= levelsNumber_ || askRemoval.price < asks_.get<1>()[levelsNumber_].price) {
         askRemovals.insert(askRemoval);
       }
 
       // Determine what will be the shift in price levels after removal.
-      if (levelsNumber_ != 0 && asks_.size() > levelsNumber_ && askRemoval.price < asks_[levelsNumber_].price) {
-        askAdditions.insert(asks_[levelsNumber_]);
+      if (levelsNumber_ != 0 && asks_.size() > levelsNumber_ && askRemoval.price < asks_.get<1>()[levelsNumber_].price) {
+        askAdditions.insert(asks_.get<1>()[levelsNumber_]);
       }
 
       // remove price level by price
-      asks_.get<1>().erase(askRemoval.price);
+      asks_.erase(askRemoval.price);
     }
 
     for (const auto& askAddition : additions.asks) {
       // We determine what will be the addition of the price level, taking into account the possible quantity.
-      if (levelsNumber_ == 0 || asks_.size() < levelsNumber_ || askAddition.price < asks_[levelsNumber_ - 1].price) {
+      if (levelsNumber_ == 0 || asks_.size() < levelsNumber_ || askAddition.price < asks_.get<1>()[levelsNumber_ - 1].price) {
         askAdditions.insert(askAddition);
       }
 
       // We determine what will be the shift after adding
-      if (levelsNumber_ != 0 && asks_.size() >= levelsNumber_ && askAddition.price < asks_[levelsNumber_ - 1].price) {
-        const auto& toRemove = asks_[levelsNumber_ - 1];
+      if (levelsNumber_ != 0 && asks_.size() >= levelsNumber_ && askAddition.price < asks_.get<1>()[levelsNumber_ - 1].price) {
+        const auto& toRemove = asks_.get<1>()[levelsNumber_ - 1];
 
         // We take into account the possibility that the previously added price level will be deleted.
         if (askAdditions.contains(toRemove)) {
@@ -264,16 +264,16 @@ class PriceLevelBook final {
         }
       }
 
-      asks_.get<1>().insert(askAddition);
+      asks_.insert(askAddition);
     }
 
     for (const auto& askUpdate : updates.asks) {
-      if (levelsNumber_ == 0 || asks_.get<1>().count(askUpdate.price) > 0) {
+      if (levelsNumber_ == 0 || asks_.count(askUpdate.price) > 0) {
         askUpdates.insert(askUpdate);
       }
 
-      asks_.get<1>().erase(askUpdate.price);
-      asks_.get<1>().insert(askUpdate);
+      asks_.erase(askUpdate.price);
+      asks_.insert(askUpdate);
     }
 
     for (const auto& bidRemoval : removals.bids) {
@@ -281,31 +281,31 @@ class PriceLevelBook final {
 
       // Determine what will be the removal given the number of price levels.
       if (levelsNumber_ == 0 || bids_.size() <= levelsNumber_ ||
-          bidRemoval.price > bids_[bids_.size() - 1 - levelsNumber_].price) {
+          bidRemoval.price > bids_.get<1>()[bids_.size() - 1 - levelsNumber_].price) {
         bidRemovals.insert(bidRemoval);
       }
 
       // Determine what will be the shift in price levels after removal.
       if (levelsNumber_ != 0 && bids_.size() > levelsNumber_ &&
-          bidRemoval.price > bids_[bids_.size() - 1 - levelsNumber_].price) {
-        bidAdditions.insert(bids_[bids_.size() - 1 - levelsNumber_]);
+          bidRemoval.price > bids_.get<1>()[bids_.size() - 1 - levelsNumber_].price) {
+        bidAdditions.insert(bids_.get<1>()[bids_.size() - 1 - levelsNumber_]);
       }
 
       // remove price level by price
-      bids_.get<1>().erase(bidRemoval.price);
+      bids_.erase(bidRemoval.price);
     }
 
     for (const auto& bidAddition : additions.bids) {
       // We determine what will be the addition of the price level, taking into account the possible quantity.
       if (levelsNumber_ == 0 || bids_.size() < levelsNumber_ ||
-          bidAddition.price > bids_[bids_.size() - levelsNumber_].price) {
+          bidAddition.price > bids_.get<1>()[bids_.size() - levelsNumber_].price) {
         bidAdditions.insert(bidAddition);
       }
 
       // We determine what will be the shift after adding
       if (levelsNumber_ != 0 && bids_.size() >= levelsNumber_ &&
-          bidAddition.price > bids_[bids_.size() - levelsNumber_].price) {
-        const auto& toRemove = bids_[bids_.size() - levelsNumber_];
+          bidAddition.price > bids_.get<1>()[bids_.size() - levelsNumber_].price) {
+        const auto& toRemove = bids_.get<1>()[bids_.size() - levelsNumber_];
 
         // We take into account the possibility that the previously added price level will be deleted.
         if (bidAdditions.contains(toRemove)) {
@@ -315,16 +315,16 @@ class PriceLevelBook final {
         }
       }
 
-      bids_.get<1>().insert(bidAddition);
+      bids_.insert(bidAddition);
     }
 
     for (const auto& bidUpdate : updates.bids) {
-      if (levelsNumber_ == 0 || bids_.get<1>().count(bidUpdate.price) > 0) {
+      if (levelsNumber_ == 0 || bids_.count(bidUpdate.price) > 0) {
         bidUpdates.insert(bidUpdate);
       }
 
-      bids_.get<1>().erase(bidUpdate.price);
-      bids_.get<1>().insert(bidUpdate);
+      bids_.erase(bidUpdate.price);
+      bids_.insert(bidUpdate);
     }
 
     return {PriceLevelChanges{std::vector<PriceLevel>{askAdditions.begin(), askAdditions.end()},
@@ -336,13 +336,13 @@ class PriceLevelBook final {
   }
 
   [[nodiscard]] std::vector<PriceLevel> getAsks() const {
-    return {asks_.begin(),
-            (levelsNumber_ == 0 || asks_.size() <= levelsNumber_) ? asks_.end() : asks_.begin() + levelsNumber_};
+    return {asks_.get<1>().begin(),
+            (levelsNumber_ == 0 || asks_.get<1>().size() <= levelsNumber_) ? asks_.get<1>().end() : asks_.get<1>().begin() + levelsNumber_};
   }
 
   [[nodiscard]] std::vector<PriceLevel> getBids() const {
-    return {bids_.rbegin(),
-            (levelsNumber_ == 0 || bids_.size() <= levelsNumber_) ? bids_.rend() : bids_.rbegin() + levelsNumber_};
+    return {bids_.get<1>().rbegin(),
+            (levelsNumber_ == 0 || bids_.get<1>().size() <= levelsNumber_) ? bids_.get<1>().rend() : bids_.get<1>().rbegin() + levelsNumber_};
   }
 
  public:
