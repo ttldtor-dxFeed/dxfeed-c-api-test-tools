@@ -59,9 +59,7 @@ struct PriceLevelChangesSet {
 
 namespace bmi = boost::multi_index;
 
-using PriceLevelContainer = bmi::multi_index_container<
-  PriceLevel,
-  bmi::indexed_by<bmi::ordered_unique<bmi::member<PriceLevel, double, &PriceLevel::price>>, bmi::random_access<>>>;
+using PriceLevelContainer = std::set<PriceLevel>;
 
 class PriceLevelBook final {
   dxf_snapshot_t snapshot_;
@@ -69,7 +67,9 @@ class PriceLevelBook final {
   std::string source_;
   std::size_t levelsNumber_;
   PriceLevelContainer asks_;
+  PriceLevelContainer::iterator lastAsk_;
   PriceLevelContainer bids_;
+  PriceLevelContainer::iterator lastBid_;
   std::unordered_map<dxf_long_t, OrderData> orderDataSnapshot_;
   bool isValid_;
   std::mutex mutex_;
@@ -92,7 +92,9 @@ class PriceLevelBook final {
         source_{std::move(source)},
         levelsNumber_{levelsNumber},
         asks_{},
+        lastAsk_{asks_.end()},
         bids_{},
+        lastBid_{bids_.end()},
         orderDataSnapshot_{},
         isValid_{false},
         mutex_{} {}
@@ -185,9 +187,9 @@ class PriceLevelBook final {
 
     // We generate lists of additions, updates, removals
     for (const auto& updateAsk : priceLevelUpdates.asks) {
-      auto found = asks_.lower_bound(updateAsk.price);
+      auto found = asks_.find(updateAsk);
 
-      if (found == asks_.end() || !areEqualPrices(found->price, updateAsk.price)) {
+      if (found == asks_.end()) {
         additions.asks.push_back(updateAsk);
       } else {
         auto newPriceLevelChange = *found;
@@ -204,9 +206,9 @@ class PriceLevelBook final {
     }
 
     for (const auto& updateBid : priceLevelUpdates.bids) {
-      auto found = bids_.lower_bound(updateBid.price);
+      auto found = bids_.find(updateBid);
 
-      if (found == bids_.end() || !areEqualPrices(found->price, updateBid.price)) {
+      if (found == bids_.end()) {
         additions.bids.push_back(updateBid);
       } else {
         auto newPriceLevelChange = *found;
@@ -229,26 +231,53 @@ class PriceLevelBook final {
     std::set<PriceLevel> askUpdates{};
     std::set<PriceLevel> bidUpdates{};
 
+    auto nthAsk = [this]() {
+      auto result = lastAsk_;
+
+      return ++result;
+    };
+
+    auto nthBid = [this]() {
+      auto result = lastBid_;
+
+      return --result;
+    };
+
+
     for (const auto& askRemoval : removals.asks) {
       if (asks_.empty()) continue;
 
+      auto found = asks_.find(askRemoval);
+
+      if (levelsNumber_ == 0) {
+        askRemovals.insert(askRemoval);
+        asks_.erase(found);
+        lastAsk_ = asks_.end();
+
+        continue;
+      }
+
+
+
       // Determine what will be the removal given the number of price levels.
-      if (levelsNumber_ == 0 || asks_.size() <= levelsNumber_ || askRemoval.price < asks_.get<1>()[levelsNumber_].price) {
+      if (asks_.size() <= levelsNumber_ || askRemoval.price < nthAsk()->price) {
         askRemovals.insert(askRemoval);
       }
 
+      PriceLevel shiftedPL{};
+
       // Determine what will be the shift in price levels after removal.
-      if (levelsNumber_ != 0 && asks_.size() > levelsNumber_ && askRemoval.price < asks_.get<1>()[levelsNumber_].price) {
-        askAdditions.insert(asks_.get<1>()[levelsNumber_]);
+      if (asks_.size() > levelsNumber_ && askRemoval.price < nthAsk()->price) {
+        shiftedPL = *nthAsk();
+        askAdditions.insert(*nthAsk());
       }
 
-      // remove price level by price
-      asks_.erase(askRemoval.price);
+      auto next = asks_.erase(found);
     }
 
     for (const auto& askAddition : additions.asks) {
       // We determine what will be the addition of the price level, taking into account the possible quantity.
-      if (levelsNumber_ == 0 || asks_.size() < levelsNumber_ || askAddition.price < asks_.get<1>()[levelsNumber_ - 1].price) {
+      if (levelsNumber_ == 0 || asks_.size() < levelsNumber_ || askAddition.price < lastAsk_->price) {
         askAdditions.insert(askAddition);
       }
 
