@@ -7,10 +7,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <fstream>
 #include <iostream>
 #include <thread>
 #include <unordered_map>
-#include <fstream>
 
 #include "StringConverter.hpp"
 
@@ -28,7 +28,8 @@ inline std::string formatLocalTime(long long timestamp, const std::string& forma
   return fmt::format(fmt::format("{{:{}}}", format), fmt::localtime(static_cast<std::time_t>(timestamp)));
 }
 
-inline std::string formatLocalTimestampWithMillis(long long timestamp, const std::string& format = "%Y-%m-%d %H:%M:%S") {
+inline std::string formatLocalTimestampWithMillis(long long timestamp,
+                                                  const std::string& format = "%Y-%m-%d %H:%M:%S") {
   long long ms = timestamp % 1000;
 
   return fmt::format("{}.{:0>3}", formatLocalTime(timestamp / 1000, format), ms);
@@ -37,7 +38,6 @@ inline std::string formatLocalTimestampWithMillis(long long timestamp, const std
 std::atomic<std::size_t> eventCounter = 0;
 std::atomic<bool> check = true;
 std::atomic<bool> stop = false;
-
 
 int main(int argc, char* argv[]) {
   if (argc < 4) {
@@ -100,9 +100,12 @@ int main(int argc, char* argv[]) {
   auto th = std::thread([] {
     using namespace std::chrono_literals;
 
-    std::ofstream of{"bench.csv"};
-
     auto start = std::chrono::system_clock::now();
+
+    std::ofstream of{
+      fmt::format("bench--{}.csv",
+                  formatLocalTime(std::chrono::duration_cast<std::chrono::seconds>(start.time_since_epoch()).count(),
+                                  "%Y-%m-%d--%H-%M-%S"))};
 
     while (!stop) {
       auto current = std::chrono::system_clock::now();
