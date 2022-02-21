@@ -23,4 +23,5 @@ add_subdirectory(c-api-lib)
 add_subdirectory(tools/mt-reader)
 add_subdirectory(tools/collision-detector)
 add_subdirectory(tools/plb-tester)
+add_subdirectory(tools/bench)
 
