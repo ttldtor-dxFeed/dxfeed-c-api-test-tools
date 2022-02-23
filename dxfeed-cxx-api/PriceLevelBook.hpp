@@ -24,21 +24,24 @@
 #include "StringConverter.hpp"
 
 namespace dxf {
+static inline constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
 
 struct OrderData {
   dxf_long_t index = 0;
-  double price = std::numeric_limits<double>::quiet_NaN();
-  double size = std::numeric_limits<double>::quiet_NaN();
+  double price = NaN;
+  double size = NaN;
   dxf_long_t time = 0;
   dxf_order_side_t side = dxf_osd_undefined;
 };
 
 struct PriceLevel {
-  double price = std::numeric_limits<double>::quiet_NaN();
-  double size = std::numeric_limits<double>::quiet_NaN();
+  double price = NaN;
+  double size = NaN;
   std::int64_t time = 0;
+};
 
-  friend bool operator<(const PriceLevel& a, const PriceLevel& b) {
+struct AskPriceLevel : PriceLevel {
+  friend bool operator<(const AskPriceLevel& a, const AskPriceLevel& b) {
     if (std::isnan(b.price)) return true;
     if (std::isnan(a.price)) return false;
 
@@ -46,9 +49,18 @@ struct PriceLevel {
   }
 };
 
+struct BidPriceLevel : PriceLevel {
+  friend bool operator<(const BidPriceLevel& a, const BidPriceLevel& b) {
+    if (std::isnan(b.price)) return false;
+    if (std::isnan(a.price)) return true;
+
+    return a.price > b.price;
+  }
+};
+
 struct PriceLevelChanges {
-  std::vector<PriceLevel> asks{};
-  std::vector<PriceLevel> bids{};
+  std::vector<AskPriceLevel> asks{};
+  std::vector<BidPriceLevel> bids{};
 };
 
 struct PriceLevelChangesSet {
@@ -66,10 +78,16 @@ class PriceLevelBook final {
   std::string symbol_;
   std::string source_;
   std::size_t levelsNumber_;
-  PriceLevelContainer asks_;
-  PriceLevelContainer::iterator lastAsk_;
-  PriceLevelContainer bids_;
-  PriceLevelContainer::iterator lastBid_;
+
+  /*
+   * Since we are working with std::set, which does not imply random access, we have to keep the iterators lastAsk,
+   * lastBid for the case with a limit on the number of PLs. These iterators, as well as the look-ahead functions, are
+   * used to find out if we are performing operations on PL within the range given to the user.
+   */
+  std::set<AskPriceLevel> asks_;
+  std::set<AskPriceLevel>::iterator lastAsk_;
+  std::set<BidPriceLevel> bids_;
+  std::set<BidPriceLevel>::iterator lastBid_;
   std::unordered_map<dxf_long_t, OrderData> orderDataSnapshot_;
   bool isValid_;
   std::mutex mutex_;
@@ -175,11 +193,10 @@ class PriceLevelBook final {
       }
     }
 
-    return {std::vector<PriceLevel>{askUpdates.begin(), askUpdates.end()},
-            std::vector<PriceLevel>{bidUpdates.rbegin(), bidUpdates.rend()}};
+    return {std::vector<AskPriceLevel>{askUpdates.begin(), askUpdates.end()},
+            std::vector<BidPriceLevel>{bidUpdates.rbegin(), bidUpdates.rend()}};
   }
 
-  // TODO: price levels number
   PriceLevelChangesSet applyUpdates(const PriceLevelChanges& priceLevelUpdates) {
     PriceLevelChanges additions{};
     PriceLevelChanges updates{};
@@ -243,7 +260,6 @@ class PriceLevelBook final {
       return --result;
     };
 
-
     for (const auto& askRemoval : removals.asks) {
       if (asks_.empty()) continue;
 
@@ -257,39 +273,97 @@ class PriceLevelBook final {
         continue;
       }
 
-
+      auto removed = false;
 
       // Determine what will be the removal given the number of price levels.
       if (asks_.size() <= levelsNumber_ || askRemoval.price < nthAsk()->price) {
         askRemovals.insert(askRemoval);
+        removed = true;
       }
 
-      PriceLevel shiftedPL{};
-
       // Determine what will be the shift in price levels after removal.
-      if (asks_.size() > levelsNumber_ && askRemoval.price < nthAsk()->price) {
-        shiftedPL = *nthAsk();
+      if (removed && asks_.size() > levelsNumber_) {
         askAdditions.insert(*nthAsk());
       }
 
-      auto next = asks_.erase(found);
+      // Determine the adjusted last ask price (NaN -- asks.end)
+      AskPriceLevel newLastAskPL{};
+
+      if (removed) { // askRemoval.price <= lastAsk.price
+        if (nthAsk() != asks_.end()) { // there is another ask after last
+          newLastAskPL.price = nthAsk()->price;
+        } else {
+          if (askRemoval.price < lastAsk_->price) {
+            newLastAskPL.price = lastAsk_->price;
+          } else if (lastAsk_ != asks_.begin()) {
+            newLastAskPL.price = (--lastAsk_)->price;
+          }
+        }
+      } else {
+        newLastAskPL.price = lastAsk_->price;
+      }
+
+      asks_.erase(found);
+
+      if (std::isnan(newLastAskPL.price)) {
+        lastAsk_ = asks_.end();
+      } else {
+        lastAsk_ = asks_.find(newLastAskPL);
+      }
     }
 
     for (const auto& askAddition : additions.asks) {
-      // We determine what will be the addition of the price level, taking into account the possible quantity.
-      if (levelsNumber_ == 0 || asks_.size() < levelsNumber_ || askAddition.price < lastAsk_->price) {
+      if (levelsNumber_ == 0) {
         askAdditions.insert(askAddition);
+        asks_.insert(askAddition);
+        lastAsk_ = asks_.end();
+
+        continue;
+      }
+
+      auto added = false;
+
+      // We determine what will be the addition of the price level, taking into account the possible quantity.
+      if (asks_.size() < levelsNumber_ || askAddition.price < lastAsk_->price) {
+        askAdditions.insert(askAddition);
+        added = true;
       }
 
       // We determine what will be the shift after adding
-      if (levelsNumber_ != 0 && asks_.size() >= levelsNumber_ && askAddition.price < asks_.get<1>()[levelsNumber_ - 1].price) {
-        const auto& toRemove = asks_.get<1>()[levelsNumber_ - 1];
+      if (added && asks_.size() >= levelsNumber_) {
+        const auto& toRemove = *lastAsk_;
 
         // We take into account the possibility that the previously added price level will be deleted.
-        if (askAdditions.contains(toRemove)) {
+        if (askAdditions.count(toRemove) > 0) {
           askAdditions.erase(toRemove);
         } else {
           askRemovals.insert(toRemove);
+        }
+      }
+
+      // Determine the adjusted last ask price (NaN -- asks.end)
+      AskPriceLevel newLastAskPL = *lastAsk_;
+
+      if (added) {
+        if (lastAsk_ == asks_.end()) { // empty
+          newLastAskPL.price = askAddition.price;
+        } else {
+          if (askAddition.price < lastAsk_->price) { // add before the last
+            if (asks_.size() >= levelsNumber_) {
+              newLastAskPL.price = askAddition.price;
+
+              if (lastAsk_ != asks_.begin()) {
+                auto prev = lastAsk_;
+                --prev;
+
+                if (askAddition.price < prev->price) {
+                  newLastAskPL.price = prev->price;
+                }
+              }
+            }
+          } else { // add after the last
+            newLastAskPL.price = askAddition.price;
+          }
         }
       }
 
@@ -337,7 +411,7 @@ class PriceLevelBook final {
         const auto& toRemove = bids_.get<1>()[bids_.size() - levelsNumber_];
 
         // We take into account the possibility that the previously added price level will be deleted.
-        if (bidAdditions.contains(toRemove)) {
+        if (bidAdditions.count(toRemove) > 0) {
           bidAdditions.erase(toRemove);
         } else {
           bidRemovals.insert(toRemove);
