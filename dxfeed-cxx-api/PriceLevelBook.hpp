@@ -42,6 +42,13 @@ struct PriceLevel {
   std::int64_t time = 0;
 
   [[nodiscard]] bool isValid() const { return std::isnan(price); }
+
+  friend bool operator<(const PriceLevel& a, const PriceLevel& b) {
+    if (std::isnan(b.price)) return true;
+    if (std::isnan(a.price)) return false;
+
+    return a.price < b.price;
+  }
 };
 
 struct AskPriceLevel : PriceLevel {
