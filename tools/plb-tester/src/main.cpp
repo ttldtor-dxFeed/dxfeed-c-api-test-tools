@@ -62,47 +62,7 @@ int main(int argc, char *argv[]) {
   });
 
   plb->setOnIncrementalChange([](const dxf::PriceLevelChangesSet &changesSet) {
-    if (!changesSet.additions.asks.empty() || !changesSet.additions.bids.empty()) {
-      fmt::print("\n{:^77}\n", "Additions");
-      fmt::print("{:-^77}\n", "-");
-      fmt::print("{:<18} {:<18} | {:<18} {:<18}\n", " Ask", " Size", " Bid", " Size");
-      fmt::print("{:-^38}|{:-^38}\n", "-", "-");
-      for (std::size_t i = 0; i < (std::max)(changesSet.additions.asks.size(), changesSet.additions.bids.size()); i++) {
-        if (i < changesSet.additions.asks.size()) {
-          fmt::print("{:<18.6g} {:<18.6g} |", changesSet.additions.asks[i].price, changesSet.additions.asks[i].size);
-        } else {
-          fmt::print("{:^38}|", ' ');
-        }
-
-        if (i < changesSet.additions.bids.size()) {
-          fmt::print(" {:<18.6g} {:<18.6g}\n", changesSet.additions.bids[i].price, changesSet.additions.bids[i].size);
-        } else {
-          fmt::print("{:^38}\n", ' ');
-        }
-      }
-    }
-
-    if (!changesSet.updates.asks.empty() || !changesSet.updates.bids.empty()) {
-      fmt::print("\n{:^77}\n", "Updates");
-      fmt::print("{:-^77}\n", "-");
-      fmt::print("{:<18} {:<18} | {:<18} {:<18}\n", " Ask", " Size", " Bid", " Size");
-      fmt::print("{:-^38}|{:-^38}\n", "-", "-");
-      for (std::size_t i = 0; i < (std::max)(changesSet.updates.asks.size(), changesSet.updates.bids.size()); i++) {
-        if (i < changesSet.updates.asks.size()) {
-          fmt::print("{:<18.6g} {:<18.6g} |", changesSet.updates.asks[i].price, changesSet.updates.asks[i].size);
-        } else {
-          fmt::print("{:^38}|", ' ');
-        }
-
-        if (i < changesSet.updates.bids.size()) {
-          fmt::print(" {:<18.6g} {:<18.6g}\n", changesSet.updates.bids[i].price, changesSet.updates.bids[i].size);
-        } else {
-          fmt::print("{:^38}\n", ' ');
-        }
-      }
-    }
-
-    if (!changesSet.removals.asks.empty() || !changesSet.removals.bids.empty()) {
+    if (!changesSet.removals.isEmpty()) {
       fmt::print("\n{:^77}\n", "Removals");
       fmt::print("{:-^77}\n", "-");
       fmt::print("{:<18} {:<18} | {:<18} {:<18}\n", " Ask", " Size", " Bid", " Size");
@@ -122,6 +82,45 @@ int main(int argc, char *argv[]) {
       }
     }
 
+    if (!changesSet.additions.isEmpty()) {
+      fmt::print("\n{:^77}\n", "Additions");
+      fmt::print("{:-^77}\n", "-");
+      fmt::print("{:<18} {:<18} | {:<18} {:<18}\n", " Ask", " Size", " Bid", " Size");
+      fmt::print("{:-^38}|{:-^38}\n", "-", "-");
+      for (std::size_t i = 0; i < (std::max)(changesSet.additions.asks.size(), changesSet.additions.bids.size()); i++) {
+        if (i < changesSet.additions.asks.size()) {
+          fmt::print("{:<18.6g} {:<18.6g} |", changesSet.additions.asks[i].price, changesSet.additions.asks[i].size);
+        } else {
+          fmt::print("{:^38}|", ' ');
+        }
+
+        if (i < changesSet.additions.bids.size()) {
+          fmt::print(" {:<18.6g} {:<18.6g}\n", changesSet.additions.bids[i].price, changesSet.additions.bids[i].size);
+        } else {
+          fmt::print("{:^38}\n", ' ');
+        }
+      }
+    }
+
+    if (!changesSet.updates.isEmpty()) {
+      fmt::print("\n{:^77}\n", "Updates");
+      fmt::print("{:-^77}\n", "-");
+      fmt::print("{:<18} {:<18} | {:<18} {:<18}\n", " Ask", " Size", " Bid", " Size");
+      fmt::print("{:-^38}|{:-^38}\n", "-", "-");
+      for (std::size_t i = 0; i < (std::max)(changesSet.updates.asks.size(), changesSet.updates.bids.size()); i++) {
+        if (i < changesSet.updates.asks.size()) {
+          fmt::print("{:<18.6g} {:<18.6g} |", changesSet.updates.asks[i].price, changesSet.updates.asks[i].size);
+        } else {
+          fmt::print("{:^38}|", ' ');
+        }
+
+        if (i < changesSet.updates.bids.size()) {
+          fmt::print(" {:<18.6g} {:<18.6g}\n", changesSet.updates.bids[i].price, changesSet.updates.bids[i].size);
+        } else {
+          fmt::print("{:^38}\n", ' ');
+        }
+      }
+    }
   });
 
   std::cin.get();

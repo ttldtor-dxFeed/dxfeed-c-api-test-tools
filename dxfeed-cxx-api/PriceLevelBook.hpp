@@ -4,11 +4,6 @@
 #include <fmt/format.h>
 
 #include <algorithm>
-#include <boost/multi_index/identity.hpp>
-#include <boost/multi_index/member.hpp>
-#include <boost/multi_index/ordered_index.hpp>
-#include <boost/multi_index/random_access_index.hpp>
-#include <boost/multi_index_container.hpp>
 #include <cassert>
 #include <cmath>
 #include <deque>
@@ -41,7 +36,7 @@ struct PriceLevel {
   double size = NaN;
   std::int64_t time = 0;
 
-  [[nodiscard]] bool isValid() const { return std::isnan(price); }
+  [[nodiscard]] bool isValid() const { return !std::isnan(price); }
 
   friend bool operator<(const PriceLevel& a, const PriceLevel& b) {
     if (std::isnan(b.price)) return true;
@@ -72,15 +67,17 @@ struct BidPriceLevel : PriceLevel {
 struct PriceLevelChanges {
   std::vector<AskPriceLevel> asks{};
   std::vector<BidPriceLevel> bids{};
+
+  [[nodiscard]] bool isEmpty() const { return asks.empty() && bids.empty(); }
 };
 
 struct PriceLevelChangesSet {
+  PriceLevelChanges removals{};
   PriceLevelChanges additions{};
   PriceLevelChanges updates{};
-  PriceLevelChanges removals{};
-};
 
-namespace bmi = boost::multi_index;
+  [[nodiscard]] bool isEmpty() const { return additions.isEmpty() && updates.isEmpty() && removals.isEmpty(); }
+};
 
 using PriceLevelContainer = std::set<PriceLevel>;
 
@@ -211,8 +208,9 @@ class PriceLevelBook final {
   // TODO: C++14 lambda
   template <typename PriceLevelUpdateSide, typename PriceLevelStorageSide, typename PriceLevelChangesSide>
   static void generatePriceLevelChanges(const PriceLevelUpdateSide& priceLevelUpdateSide,
-                                const PriceLevelStorageSide& priceLevelStorageSide, PriceLevelChangesSide& additions,
-                                PriceLevelChangesSide& removals, PriceLevelChangesSide& updates) {
+                                        const PriceLevelStorageSide& priceLevelStorageSide,
+                                        PriceLevelChangesSide& additions, PriceLevelChangesSide& removals,
+                                        PriceLevelChangesSide& updates) {
     auto found = priceLevelStorageSide.find(priceLevelUpdateSide);
 
     if (found == priceLevelStorageSide.end()) {
@@ -350,8 +348,8 @@ class PriceLevelBook final {
   template <typename PriceLevelUpdateSide, typename PriceLevelStorageSide, typename PriceLevelChangesSideSet,
             typename LastElementIter>
   static void processSideUpdate(const PriceLevelUpdateSide& priceLevelUpdateSide,
-                                  PriceLevelStorageSide& priceLevelStorageSide, PriceLevelChangesSideSet& updates,
-                                  LastElementIter& lastElementIter, std::size_t levelsNumber) {
+                                PriceLevelStorageSide& priceLevelStorageSide, PriceLevelChangesSideSet& updates,
+                                LastElementIter& lastElementIter, std::size_t levelsNumber) {
     if (levelsNumber == 0) {
       priceLevelStorageSide.erase(priceLevelUpdateSide);
       priceLevelStorageSide.insert(priceLevelUpdateSide);
@@ -427,17 +425,21 @@ class PriceLevelBook final {
       processSideUpdate(bidUpdate, bids_, bidUpdates, lastBid_, levelsNumber_);
     }
 
-    return {PriceLevelChanges{std::vector<AskPriceLevel>{askAdditions.begin(), askAdditions.end()},
+    return {PriceLevelChanges{std::vector<AskPriceLevel>{askRemovals.begin(), askRemovals.end()},
+                              std::vector<BidPriceLevel>{bidRemovals.begin(), bidRemovals.end()}},
+            PriceLevelChanges{std::vector<AskPriceLevel>{askAdditions.begin(), askAdditions.end()},
                               std::vector<BidPriceLevel>{bidAdditions.begin(), bidAdditions.end()}},
             PriceLevelChanges{std::vector<AskPriceLevel>{askUpdates.begin(), askUpdates.end()},
-                              std::vector<BidPriceLevel>{bidUpdates.begin(), bidUpdates.end()}},
-            PriceLevelChanges{std::vector<AskPriceLevel>{askRemovals.begin(), askRemovals.end()},
-                              std::vector<BidPriceLevel>{bidRemovals.begin(), bidRemovals.end()}}};
+                              std::vector<BidPriceLevel>{bidUpdates.begin(), bidUpdates.end()}}};
   }
 
-  [[nodiscard]] std::vector<AskPriceLevel> getAsks() const { return {asks_.begin(), lastAsk_}; }
+  [[nodiscard]] std::vector<AskPriceLevel> getAsks() const {
+    return {asks_.begin(), lastAsk_ == asks_.end() ? lastAsk_ : std::next(lastAsk_)};
+  }
 
-  [[nodiscard]] std::vector<BidPriceLevel> getBids() const { return {bids_.begin(), lastBid_}; }
+  [[nodiscard]] std::vector<BidPriceLevel> getBids() const {
+    return {bids_.begin(), lastBid_ == bids_.end() ? lastBid_ : std::next(lastBid_)};
+  }
 
  public:
   // TODO: move to another thread
@@ -467,7 +469,7 @@ class PriceLevelBook final {
       if (onNewBook_) {
         onNewBook_(PriceLevelChanges{getAsks(), getBids()});
       }
-    } else {
+    } else if (!resultingChangesSet.isEmpty()) {
       if (onIncrementalChange_) {
         onIncrementalChange_(resultingChangesSet);
       }
