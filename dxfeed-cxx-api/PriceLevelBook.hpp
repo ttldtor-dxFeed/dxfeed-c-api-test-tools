@@ -190,7 +190,7 @@ class PriceLevelBook final {
           processOrderRemoval(order, foundOrderData);
           orderDataSnapshot_.erase(foundOrderData.index);
         } else {
-          if (order.side != foundOrderData.side) {
+          if (order.side != foundOrderData.side || !areEqualPrices(order.price, foundOrderData.price)) {
             processOrderRemoval(order, foundOrderData);
           }
 
