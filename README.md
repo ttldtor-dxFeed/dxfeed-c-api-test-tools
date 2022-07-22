@@ -1,5 +1,14 @@
 # dxfeed-c-api-test-tools
 
+```shell
+git clone --recurse-submodules git@github.com:ttldtor/dxfeed-c-api-test-tools.git
+cd dxfeed-c-api-test-tools
+mkdir build
+cd build
+cmake ..
+cmake --build .
+```
+
 ## mt-reader
 The multi thread file (candle web service) reader
 
