@@ -14,25 +14,10 @@
 
 #include "StringConverter.hpp"
 
-inline std::string formatTime(long long timestamp, const std::string& format = "%Y-%m-%d %H:%M:%S") {
-  return fmt::format(fmt::format("{{:{}}}", format), fmt::gmtime(static_cast<std::time_t>(timestamp)));
-}
-
-inline std::string formatTimestampWithMillis(long long timestamp, const std::string& format = "%Y-%m-%d %H:%M:%S") {
+inline std::string formatLocalTimestampWithMillis(long long timestamp) {
   long long ms = timestamp % 1000;
 
-  return fmt::format("{}.{:0>3}", formatTime(timestamp / 1000, format), ms);
-}
-
-inline std::string formatLocalTime(long long timestamp, const std::string& format = "%Y-%m-%d %H:%M:%S") {
-  return fmt::format(fmt::format("{{:{}}}", format), fmt::localtime(static_cast<std::time_t>(timestamp)));
-}
-
-inline std::string formatLocalTimestampWithMillis(long long timestamp,
-                                                  const std::string& format = "%Y-%m-%d %H:%M:%S") {
-  long long ms = timestamp % 1000;
-
-  return fmt::format("{}.{:0>3}", formatLocalTime(timestamp / 1000, format), ms);
+  return fmt::format("{:%Y-%m-%d %H:%M:%S}.{:0>3}", fmt::localtime(static_cast<std::time_t>(timestamp / 1000)), ms);
 }
 
 std::atomic<std::size_t> eventCounter = 0;
@@ -104,8 +89,8 @@ int main(int argc, char* argv[]) {
 
     std::ofstream of{
       fmt::format("bench--{}.csv",
-                  formatLocalTime(std::chrono::duration_cast<std::chrono::seconds>(start.time_since_epoch()).count(),
-                                  "%Y-%m-%d--%H-%M-%S"))};
+                  formatLocalTimestampWithMillis(
+                    std::chrono::duration_cast<std::chrono::seconds>(start.time_since_epoch()).count()))};
 
     while (!stop) {
       auto current = std::chrono::system_clock::now();
@@ -116,7 +101,7 @@ int main(int argc, char* argv[]) {
         eventCounter = 0;
 
         auto nowString = formatLocalTimestampWithMillis(
-          std::chrono::duration_cast<std::chrono::milliseconds>(current.time_since_epoch()).count(), "%H:%M:%S");
+          std::chrono::duration_cast<std::chrono::milliseconds>(current.time_since_epoch()).count());
         fmt::print("{}\n", nowString);
         fmt::print("Current speed: {:0.0f} events per second\n", avg);
         fmt::print("Event check: {}\n", check);
